@@ -341,18 +341,8 @@ public class GhidraMCPHeadlessServer implements GhidraLaunchable {
         });
 
         // --- Program Management ---
-
-        server.createContext("/load_program", exchange -> {
-            Map<String, String> params = parsePostParams(exchange);
-            String filePath = params.get("file");
-            sendResponse(exchange, endpointHandler.loadProgram(filePath));
-        });
-
-        server.createContext("/close_program", exchange -> {
-            Map<String, String> params = parsePostParams(exchange);
-            String name = params.get("name");
-            sendResponse(exchange, endpointHandler.closeProgram(name));
-        });
+        // NOTE: /load_program, /close_program, /run_analysis are now registered via
+        // @McpTool annotations in HeadlessEndpointHandler (handled by AnnotationScanner above)
 
         // --- Project Management (headless-specific) ---
 
