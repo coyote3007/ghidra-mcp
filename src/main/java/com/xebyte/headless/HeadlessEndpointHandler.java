@@ -16,7 +16,12 @@
 package com.xebyte.headless;
 
 import com.xebyte.core.BinaryComparisonService;
+import com.xebyte.core.McpTool;
+import com.xebyte.core.McpToolGroup;
+import com.xebyte.core.Param;
+import com.xebyte.core.ParamSource;
 import com.xebyte.core.ProgramProvider;
+import com.xebyte.core.Response;
 import com.xebyte.core.ServiceUtils;
 import com.xebyte.core.ThreadingStrategy;
 import ghidra.program.model.address.Address;
@@ -40,6 +45,7 @@ import ghidra.app.cmd.disassemble.DisassembleCommand;
  * Contains the business logic for all REST API endpoints, adapted for headless
  * operation (no GUI dependencies).
  */
+@McpToolGroup(value = "headless", description = "Headless-specific program loading and project management")
 public class HeadlessEndpointHandler {
 
     private static final String VERSION = "4.3.0-headless";
@@ -336,9 +342,61 @@ public class HeadlessEndpointHandler {
     }
 
     // ==========================================================================
-    // HEADLESS-SPECIFIC ENDPOINTS
+    // HEADLESS-SPECIFIC ENDPOINTS (MCP-annotated for dynamic discovery)
     // ==========================================================================
 
+    @McpTool(path = "/load_program", method = "POST",
+            description = "Load a binary file from disk into Ghidra for analysis (headless mode). "
+                + "Supports PE, ELF, Mach-O, and other formats. The binary is auto-detected and imported.",
+            category = "headless")
+    public Response loadProgramMcp(
+            @Param(value = "file", source = ParamSource.BODY,
+                   description = "Absolute path to the binary file on disk (e.g. /samples/malware/sample.exe)") String filePath,
+            @Param(value = "auto_analyze", source = ParamSource.BODY, defaultValue = "true",
+                   description = "Run auto-analysis after loading (identifies functions, strings, etc.)") boolean autoAnalyze) {
+        
+        if (filePath == null || filePath.isEmpty()) {
+            return Response.err("file parameter is required");
+        }
+
+        File file = new File(filePath);
+        if (!file.exists()) {
+            return Response.err("File not found: " + filePath);
+        }
+
+        if (!(programProvider instanceof HeadlessProgramProvider)) {
+            return Response.err("Load not supported in this mode (requires headless)");
+        }
+
+        HeadlessProgramProvider hpp = (HeadlessProgramProvider) programProvider;
+        Program program = hpp.loadProgramFromFile(file);
+
+        if (program == null) {
+            return Response.err("Failed to load program from: " + filePath);
+        }
+
+        int functionsBefore = program.getFunctionManager().getFunctionCount();
+        long analysisMs = 0;
+        int functionsAfter = functionsBefore;
+
+        if (autoAnalyze) {
+            HeadlessProgramProvider.AnalysisResult result = hpp.runAnalysis(program);
+            analysisMs = result.durationMs;
+            functionsAfter = result.totalFunctions;
+        }
+
+        return Response.ok(Map.of(
+            "success", true,
+            "program", program.getName(),
+            "path", filePath,
+            "auto_analyzed", autoAnalyze,
+            "analysis_duration_ms", analysisMs,
+            "functions_before", functionsBefore,
+            "functions_after", functionsAfter
+        ));
+    }
+
+    // Legacy String-returning method for backward compatibility with manual endpoints
     public String loadProgram(String filePath) {
         if (filePath == null || filePath.isEmpty()) {
             return "{\"error\": \"File path required\"}";
@@ -363,6 +421,33 @@ public class HeadlessEndpointHandler {
         return "{\"error\": \"Load not supported in this mode\"}";
     }
 
+    @McpTool(path = "/close_program", method = "POST",
+            description = "Close an open program and release its resources.",
+            category = "headless")
+    public Response closeProgramMcp(
+            @Param(value = "name", source = ParamSource.BODY, defaultValue = "",
+                   description = "Program name to close. If empty, closes the current program.") String name) {
+        
+        Program program = programProvider.getProgram(name);
+        if (program == null) {
+            return Response.err("Program not found: " + (name != null && !name.isEmpty() ? name : "current"));
+        }
+
+        if (!(programProvider instanceof HeadlessProgramProvider)) {
+            return Response.err("Close not supported in this mode");
+        }
+
+        HeadlessProgramProvider hpp = (HeadlessProgramProvider) programProvider;
+        String closedName = program.getName();
+        hpp.closeProgram(program);
+        
+        return Response.ok(Map.of(
+            "success", true,
+            "closed", closedName
+        ));
+    }
+
+    // Legacy String-returning method for backward compatibility
     public String closeProgram(String name) {
         Program program = programProvider.getProgram(name);
         if (program == null) {
@@ -378,8 +463,38 @@ public class HeadlessEndpointHandler {
         return "{\"error\": \"Close not supported in this mode\"}";
     }
 
+    @McpTool(path = "/run_analysis", method = "POST",
+            description = "Run Ghidra auto-analysis on a program. This identifies functions, data types, "
+                + "strings, cross-references, and other program structure.",
+            category = "headless")
+    public Response runAnalysisMcp(
+            @Param(value = "program", source = ParamSource.BODY, defaultValue = "",
+                   description = "Program name to analyze. If empty, uses the current program.") String programName) {
+        
+        Program program = programProvider.getProgram(programName);
+        if (program == null) {
+            return Response.err("No program loaded");
+        }
+
+        if (!(programProvider instanceof HeadlessProgramProvider)) {
+            return Response.err("Analysis not supported in this mode");
+        }
+
+        HeadlessProgramProvider hpp = (HeadlessProgramProvider) programProvider;
+        HeadlessProgramProvider.AnalysisResult result = hpp.runAnalysis(program);
+
+        return Response.ok(Map.of(
+            "success", result.success,
+            "message", result.message,
+            "duration_ms", result.durationMs,
+            "total_functions", result.totalFunctions,
+            "new_functions", result.newFunctions,
+            "program", program.getName()
+        ));
+    }
+
     /**
-     * Run auto-analysis on a program.
+     * Run auto-analysis on a program (legacy String version).
      * This identifies functions, data types, strings, and other program structure.
      *
      * @param programName Optional program name (uses current if not specified)
