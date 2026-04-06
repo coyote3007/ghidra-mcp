@@ -463,35 +463,8 @@ public class HeadlessEndpointHandler {
         return "{\"error\": \"Close not supported in this mode\"}";
     }
 
-    @McpTool(path = "/run_analysis", method = "POST",
-            description = "Run Ghidra auto-analysis on a program. This identifies functions, data types, "
-                + "strings, cross-references, and other program structure.",
-            category = "headless")
-    public Response runAnalysisMcp(
-            @Param(value = "program", source = ParamSource.BODY, defaultValue = "",
-                   description = "Program name to analyze. If empty, uses the current program.") String programName) {
-        
-        Program program = programProvider.getProgram(programName);
-        if (program == null) {
-            return Response.err("No program loaded");
-        }
-
-        if (!(programProvider instanceof HeadlessProgramProvider)) {
-            return Response.err("Analysis not supported in this mode");
-        }
-
-        HeadlessProgramProvider hpp = (HeadlessProgramProvider) programProvider;
-        HeadlessProgramProvider.AnalysisResult result = hpp.runAnalysis(program);
-
-        return Response.ok(Map.of(
-            "success", result.success,
-            "message", result.message,
-            "duration_ms", result.durationMs,
-            "total_functions", result.totalFunctions,
-            "new_functions", result.newFunctions,
-            "program", program.getName()
-        ));
-    }
+    // NOTE: /run_analysis is already defined in AnalysisService with @McpTool annotation.
+    // This legacy method is kept for backward compatibility with any direct calls.
 
     /**
      * Run auto-analysis on a program (legacy String version).
